@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Define where the baseline hashes will be securely stored
+HASH_DIR="$HOME/.integrity_checker"
+HASH_FILE="$HASH_DIR/baseline.txt"
+
+# Ensure the storage directory exists
+mkdir -p "$HASH_DIR"
+
+# Variables for arguments
+COMMAND="$1"
+TARGET="$2"
+
+# Help message if arguments are missing
+if [ -z "$COMMAND" ] || [ -z "$TARGET" ]; then
+    echo "Usage: $0 {init|check|update} <file_or_directory>"
+    exit 1
+fi
+
+# Ensure the target file/directory actually exists
+if [ ! -e "$TARGET" ]; then
+    echo "Error: Target '$TARGET' does not exist."
+    exit 1
+fi
+
+# Convert target to an absolute path (prevents errors)
+TARGET_PATH=$(realpath "$TARGET")
+
+# Main logic based on the command provided
+case "$COMMAND" in
+    init)
+        echo "Initializing baseline hashes for: $TARGET_PATH"
+        # Find all files (if directory) or just the file and hash them
+        if [ -d "$TARGET_PATH" ]; then
+            find "$TARGET_PATH" -type f -exec sha256sum {} + > "$HASH_FILE"
+        else
+            sha256sum "$TARGET_PATH" > "$HASH_FILE"
+        fi
+        echo "Hashes stored successfully in $HASH_FILE."
+        ;;
+
+    check)
+        if [ ! -f "$HASH_FILE" ]; then
+            echo "Error: No baseline found. Run 'init' first."
+            exit 1
+        fi
+        
+        echo "Checking integrity for: $TARGET_PATH"
+        
+        # sha256sum -c checks the file against the hash
+        if sha256sum -c "$HASH_FILE" > /dev/null 2>&1; then
+            echo "Status: Unmodified"
+        else
+            echo "Status: Modified (Hash mismatch)"
+            # Show exactly which files failed
+            sha256sum -c "$HASH_FILE" 2>/dev/null | grep -v "OK"
+        fi
+        ;;
+
+    update)
+        if [ ! -f "$HASH_FILE" ]; then
+            echo "Error: No baseline found. Run 'init' first."
+            exit 1
+        fi
+        
+        echo "Updating hash for: $TARGET_PATH"
+        
+        # If it's a single file, replace its entry in the baseline
+        if [ -f "$TARGET_PATH" ]; then
+            # Remove the old line for this file
+            grep -v "$TARGET_PATH$" "$HASH_FILE" > "$HASH_FILE.tmp"
+            # Generate and append the new hash
+            sha256sum "$TARGET_PATH" >> "$HASH_FILE.tmp"
+            # Replace the old file with the new one
+            mv "$HASH_FILE.tmp" "$HASH_FILE"
+        else
+            # If it's a directory, just re-initialize everything
+            find "$TARGET_PATH" -type f -exec sha256sum {} + > "$HASH_FILE"
+        fi
+        
+        echo "Hash updated successfully."
+        ;;
+
+    *)
+        echo "Unknown command: $COMMAND"
+        echo "Usage: $0 {init|check|update} <file_or_directory>"
+        exit 1
+        ;;
+esac
